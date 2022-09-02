@@ -2,3 +2,5 @@
 /Front
 
 /node_modules
+
+.env
