@@ -33,9 +33,6 @@ server.post("/participants", async (req, res) => {
 	const { name } = req.body;
 
 	const validation = userSchema.validate(req.body, { abortEarly: false });
-	const validateName = await user.findOne({
-		name: name,
-	});
 
 	if (validation.error) {
 		console.log(validation.error.details);
@@ -43,13 +40,15 @@ server.post("/participants", async (req, res) => {
 		return;
 	}
 
-	if (validateName) {
-		console.error("Usuario ja existe");
-		res.sendStatus(409);
-		return;
-	}
-
 	try {
+		const validateName = await user.findOne({
+			name: name,
+		});
+		if (validateName) {
+			console.error("Usuario ja existe");
+			res.sendStatus(409);
+			return;
+		}
 		user.insertOne({
 			name: name,
 			lastStatus: dayjs().format("HH:mm:ss"),
@@ -68,10 +67,8 @@ server.post("/participants", async (req, res) => {
 });
 
 server.get("/participants", async (req, res) => {
-	const users = await db.collection("usersBatePapo");
-	const user = req.headers.User;
-
 	try {
+		const users = await db.collection("usersBatePapo");
 		const list = await users.find().toArray();
 
 		res.send(list);
@@ -113,12 +110,11 @@ server.post("/messages", async (req, res) => {
 });
 
 server.get("/messages", async (req, res) => {
-	const messages = await db.collection("menssagesBatePapo");
-	const limit = parseInt(req.params.limit);
-
+	const limit = parseInt(req.query.limit);
 	const user = req.headers.User;
 
 	try {
+		const messages = await db.collection("menssagesBatePapo");
 		// const filterList = list.filter((menssage) => {
 		// 	if (
 		// 		menssage.type === "message" ||
@@ -160,24 +156,22 @@ server.post("/status", async (req, res) => {
 });
 
 setInterval(async () => {
-	const Users = await db.collection("usersBatePapo");
-	const Menssages = await db.collection("menssagesBatePapo");
-
 	const time = Date.now();
-	const users = await Users.find({}).toArray();
-
 	try {
-		users.map((user) => {
-			if (time - user.lastStatus > 10) {
-				Users.remove({ _id: user });
+		const Users = await db.collection("usersBatePapo");
+		const Menssages = await db.collection("menssagesBatePapo");
+		const users = await Users.find({}).toArray();
+		users.map(async (user) => {
+			if (time - user.lastStatus > 10000) {
+				await Menssages.insertOne({
+					from: "Server",
+					to: "Todos",
+					text: "sai da sala...",
+					type: "status",
+					time: dayjs().format("HH:mm:ss"),
+				});
+				await Users.remove({ _id: user });
 			}
-		});
-		Menssages.insertOne({
-			from: "Server",
-			to: "Todos",
-			text: "sai da sala...",
-			type: "status",
-			time: dayjs().format("HH : MM : SS"),
 		});
 	} catch (error) {
 		console.error(error.message);
