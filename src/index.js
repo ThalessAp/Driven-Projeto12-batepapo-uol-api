@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import joi from "joi";
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import dayjs from "dayjs";
 import dotenv from "dotenv";
 dotenv.config();
@@ -15,7 +15,7 @@ const mongodb = new MongoClient(process.env.MONGO_URI);
 let db;
 
 mongodb.connect().then(() => {
-	db = mongodb.db("batepapoApi");
+	db = mongodb.db(process.env.DATABASE_URI);
 });
 
 const userSchema = joi.object({
@@ -24,16 +24,17 @@ const userSchema = joi.object({
 const MsgSchema = joi.object({
 	to: joi.string().required(),
 	text: joi.string().required(),
-	type: joi.string().required(),
+	type: joi.string().valid("message", "private_message").required(),
 });
 
 server.post("/participants", async (req, res) => {
-	const message = await db.collection("batepapoApi");
+	const message = await db.collection("menssagesBatePapo");
 	const user = await db.collection("usersBatePapo");
+	const { name } = req.body;
 
-	const validation = userSchema.validate(req.body.name);
-	const validateName = await db.usersBatePapo.findOne({
-		name: req.body.name,
+	const validation = userSchema.validate(req.body, { abortEarly: false });
+	const validateName = await user.findOne({
+		name: name,
 	});
 
 	if (validation.error) {
@@ -50,15 +51,15 @@ server.post("/participants", async (req, res) => {
 
 	try {
 		user.insertOne({
-			name: req.body.name,
-			lastStatus: dayjs.now().format("HH : MM : SS"),
+			name: name,
+			lastStatus: dayjs().format("HH:mm:ss"),
 		});
 		message.insertOne({
 			from: req.body.name,
 			to: "Todos",
 			text: "entra na sala...",
 			type: "status",
-			time: dayjs.now().format("HH : MM : SS"),
+			time: dayjs().format("HH:mm:ss"),
 		});
 		res.sendStatus(201);
 	} catch (error) {
@@ -68,9 +69,10 @@ server.post("/participants", async (req, res) => {
 
 server.get("/participants", async (req, res) => {
 	const users = await db.collection("usersBatePapo");
+	const user = req.headers.User;
 
 	try {
-		const list = await users.find();
+		const list = await users.find().toArray();
 
 		res.send(list);
 	} catch (error) {
@@ -80,18 +82,19 @@ server.get("/participants", async (req, res) => {
 });
 
 server.post("/messages", async (req, res) => {
+	//	const {to, text, type}= req.body;
 	const user = await db.collection("usersBatePapo");
-	const messages = await db.collection("batepapoApi");
+	const messages = await db.collection("menssagesBatePapo");
 
 	const message = {
-		from: req.header.User,
+		from: req.headers.user,
 		to: req.body.to,
 		text: req.body.text,
 		type: req.body.type,
-		time: dayjs.now().format("HH : MM : SS"),
+		time: dayjs().format("HH:mm:ss"),
 	};
-	const validation = MsgSchema.validate(message);
-
+	const validation = MsgSchema.validate(req.body, { abortEarly: false });
+	console.log(message);
 	if (validation.error) {
 		console.log(validation.error.details);
 		res.sendStatus(422);
@@ -100,6 +103,7 @@ server.post("/messages", async (req, res) => {
 
 	try {
 		messages.insertOne(message);
+		//user.insertOne({name: req.headers.User, lastStatus: Date.now()});
 
 		res.sendStatus(201);
 	} catch (error) {
@@ -108,17 +112,29 @@ server.post("/messages", async (req, res) => {
 	}
 });
 
-server.get("/messages/:limit", async (req, res) => {
-	const messages = await db.collection("batepapoApi");
+server.get("/messages", async (req, res) => {
+	const messages = await db.collection("menssagesBatePapo");
 	const limit = parseInt(req.params.limit);
 
-	const user = req.header.User;
+	const user = req.headers.User;
 
 	try {
-		const message = await messages.find({
-			name: user,
-			to: { $in: [user, "Todos"] },
-		});
+		// const filterList = list.filter((menssage) => {
+		// 	if (
+		// 		menssage.type === "message" ||
+		// 		menssage.type === "status" ||
+		// 		(menssage.type === "private_message" &&
+		// 			(menssage.from === user || menssage.to === user))
+		// 	) {
+		// 		return menssage;
+		// 	}
+		// });
+		const message = await messages
+			.find({
+				name: user,
+				to: { $in: [user, "Todos"] },
+			})
+			.toArray();
 		if (!limit) {
 			res.send(message);
 		}
@@ -130,16 +146,13 @@ server.get("/messages/:limit", async (req, res) => {
 server.post("/status", async (req, res) => {
 	const Users = await db.collection("usersBatePapo");
 
-	const user = req.header.User;
+	const user = req.headers.user;
 
 	if (!Users.find({ name: user })) {
 		res.sendStatus(404);
 	}
 	try {
-		Users.findOneAndUpdate(
-			{ name: user },
-			{ name: user, lastStatus: dayjs.now().format("HH : MM : SS") }
-		);
+		Users.updateOne({ _id: user }, { $set: { lastStatus: Date.now() } });
 		res.sendStatus(200);
 	} catch (error) {
 		console.error(error.message);
@@ -148,9 +161,27 @@ server.post("/status", async (req, res) => {
 
 setInterval(async () => {
 	const Users = await db.collection("usersBatePapo");
-	const Menssages = await db.collection("batepapoApi");
+	const Menssages = await db.collection("menssagesBatePapo");
 
-	Users.remove({ lastStatus: {.diff('now', 's'), $gt: 15 } });
-});
+	const time = Date.now();
+	const users = await Users.find({}).toArray();
+
+	try {
+		users.map((user) => {
+			if (time - user.lastStatus > 10) {
+				Users.remove({ _id: user });
+			}
+		});
+		Menssages.insertOne({
+			from: "Server",
+			to: "Todos",
+			text: "sai da sala...",
+			type: "status",
+			time: dayjs().format("HH : MM : SS"),
+		});
+	} catch (error) {
+		console.error(error.message);
+	}
+}, 15000);
 
 server.listen(5000);
